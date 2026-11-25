@@ -1,0 +1,59 @@
+name: proteger-imagens
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  proteger-imagens:
+    name: proteger-imagens
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recusar autor sem permissão e remoção de imagem
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          perm="$(gh api "repos/${REPO}/collaborators/${AUTHOR}/permission" --jq '.permission' 2>/dev/null || true)"
+          case "${perm}" in
+            admin|maintain|write)
+              echo "Autor ${AUTHOR} pode publicar (${perm})."
+              ;;
+            *)
+              echo "Autor ${AUTHOR} não pode publicar mapas. Só quem tem escrita ou administração neste repositório."
+              exit 1
+              ;;
+          esac
+
+          git init --quiet
+          git remote add origin "https://github.com/${REPO}.git"
+          git fetch --filter=blob:none --no-tags origin \
+            "refs/heads/${{ github.event.pull_request.base.ref }}" \
+            "refs/pull/${PR}/head"
+          head_sha="$(git rev-parse FETCH_HEAD)"
+
+          removed="$(git diff --name-status --find-renames "${BASE}" "${head_sha}" | awk '
+            $1 ~ /^D/ && ($2 ~ /\.png$/ || $2 == "tiles.json") { print $2 }
+            $1 ~ /^R/ && ($2 ~ /\.png$/ || $2 == "tiles.json") { print $2 }
+          ')"
+          if [ -n "${removed}" ]; then
+            echo "Este pull request apaga imagens do mapa:"
+            printf '%s\n' "${removed}" | sed 's/^/  /'
+            echo "Substituir um arquivo no mesmo caminho pode. Apagar, não."
+            exit 1
+          fi
+
+          guard="$(git diff --name-only "${BASE}" "${head_sha}" -- .github/workflows/protect-images.yml || true)"
+          if [ -n "${guard}" ] && [ "${perm}" != "admin" ]; then
+            echo "Só um administrador pode alterar o workflow que protege as imagens."
+            exit 1
+          fi
+
+          echo "Nenhuma imagem foi apagada."
