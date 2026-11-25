@@ -1,0 +1,34 @@
+name: refletir-no-wiki
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  refletir-no-wiki:
+    name: refletir-no-wiki
+    runs-on: ubuntu-latest
+    steps:
+      - name: Limpar o cache do jsDelivr da branch main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
+            files="$(printf '%s\n' tiles.json houses.json versao.txt)"
+          else
+            files="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${AFTER}" --jq '.files[].filename')"
+          fi
+          {
+            printf '%s\n' "${files}"
+            printf '%s\n' tiles.json houses.json versao.txt
+          } | awk 'NF && !seen[$0]++' > /tmp/arquivos.txt
+          while IFS= read -r file; do
+            echo "purge ${file}"
+            curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/${file}" >/dev/null
+          done < /tmp/arquivos.txt
