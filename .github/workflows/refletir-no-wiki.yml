@@ -12,23 +12,27 @@ jobs:
     name: refletir-no-wiki
     runs-on: ubuntu-latest
     steps:
+      - name: Buscar os dois commits do merge
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Limpar o cache do jsDelivr da branch main
         env:
-          GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
-            files="$(printf '%s\n' tiles.json houses.json versao.txt)"
+            printf '%s\n' tiles.json houses.json versao.txt > /tmp/arquivos.txt
           else
-            files="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE}...${AFTER}" --jq '.files[].filename')"
+            git diff --name-only "${BEFORE}" "${AFTER}" > /tmp/arquivos.txt
+            printf '%s\n' tiles.json houses.json versao.txt >> /tmp/arquivos.txt
           fi
-          {
-            printf '%s\n' "${files}"
-            printf '%s\n' tiles.json houses.json versao.txt
-          } | awk 'NF && !seen[$0]++' > /tmp/arquivos.txt
-          while IFS= read -r file; do
-            echo "purge ${file}"
-            curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/${file}" >/dev/null
-          done < /tmp/arquivos.txt
+          awk 'NF && !seen[$0]++' /tmp/arquivos.txt > /tmp/lista.txt
+          total="$(wc -l < /tmp/lista.txt | tr -d ' ')"
+          echo "Limpando ${total} arquivos no jsDelivr."
+          xargs -P 16 -I{} curl -fsS --retry 3 --retry-delay 1 \
+            "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/{}" \
+            < /tmp/lista.txt >/dev/null
+          echo "Cache limpo."
